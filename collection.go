@@ -1,7 +1,9 @@
 package colt
 
 import (
+	"context"
 	"errors"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -10,6 +12,21 @@ import (
 
 type Collection[T Document] struct {
 	collection *mongo.Collection
+	traceCtx   *context.Context // optional context for tracing
+}
+
+func (repo *Collection[T]) WithContext(ctx context.Context) *Collection[T] {
+	return &Collection[T]{
+		collection: repo.collection,
+		traceCtx:   &ctx,
+	}
+}
+
+func (repo *Collection[T]) traceContext() context.Context {
+	if repo.traceCtx != nil {
+		return *repo.traceCtx
+	}
+	return DefaultContext()
 }
 
 func (repo *Collection[T]) Insert(model T) (T, error) {
@@ -23,7 +40,7 @@ func (repo *Collection[T]) Insert(model T) (T, error) {
 		}
 	}
 
-	res, err := repo.collection.InsertOne(DefaultContext(), model)
+	res, err := repo.collection.InsertOne(repo.traceContext(), model)
 	if err != nil && res != nil {
 		model.SetID(res.InsertedID.(string))
 	}
@@ -42,17 +59,17 @@ func (repo *Collection[T]) UpdateOne(filter interface{}, model T) error {
 		}
 	}
 
-	_, err := repo.collection.UpdateOne(DefaultContext(), filter, bson.M{"$set": model})
+	_, err := repo.collection.UpdateOne(repo.traceContext(), filter, bson.M{"$set": model})
 	return err
 }
 
 func (repo *Collection[T]) UpdateMany(filter interface{}, doc bson.M) error {
-	_, err := repo.collection.UpdateMany(DefaultContext(), filter, doc)
+	_, err := repo.collection.UpdateMany(repo.traceContext(), filter, doc)
 	return err
 }
 
 func (repo *Collection[T]) DeleteById(id string) error {
-	res, err := repo.collection.DeleteOne(DefaultContext(), bson.M{"_id": id})
+	res, err := repo.collection.DeleteOne(repo.traceContext(), bson.M{"_id": id})
 
 	if err != nil {
 		return err
@@ -71,18 +88,18 @@ func (repo *Collection[T]) FindById(id interface{}) (T, error) {
 
 func (repo *Collection[T]) FindOne(filter interface{}) (T, error) {
 	var target T
-	err := repo.collection.FindOne(DefaultContext(), filter).Decode(&target)
+	err := repo.collection.FindOne(repo.traceContext(), filter).Decode(&target)
 
 	return target, err
 }
 
 func (repo *Collection[T]) Find(filter interface{}, opts ...*options.FindOptions) ([]T, error) {
-	csr, err := repo.collection.Find(DefaultContext(), filter, opts...)
+	csr, err := repo.collection.Find(repo.traceContext(), filter, opts...)
 	if err != nil {
 		return nil, err
 	}
 	var result = []T{}
-	if err = csr.All(DefaultContext(), &result); err != nil {
+	if err = csr.All(repo.traceContext(), &result); err != nil {
 		return nil, err
 	}
 
@@ -90,15 +107,15 @@ func (repo *Collection[T]) Find(filter interface{}, opts ...*options.FindOptions
 }
 
 func (repo *Collection[T]) CountDocuments(filter interface{}) (int64, error) {
-	count, err := repo.collection.CountDocuments(DefaultContext(), filter)
+	count, err := repo.collection.CountDocuments(repo.traceContext(), filter)
 	return count, err
 }
 
 func (repo *Collection[T]) Aggregate(pipeline mongo.Pipeline, opts ...*options.AggregateOptions) ([]bson.M, error) {
-	csr, err := repo.collection.Aggregate(DefaultContext(), pipeline, opts...)
+	csr, err := repo.collection.Aggregate(repo.traceContext(), pipeline, opts...)
 
 	var result = []bson.M{}
-	if err = csr.All(DefaultContext(), &result); err != nil {
+	if err = csr.All(repo.traceContext(), &result); err != nil {
 		return nil, err
 	}
 
@@ -106,7 +123,7 @@ func (repo *Collection[T]) Aggregate(pipeline mongo.Pipeline, opts ...*options.A
 }
 
 func (repo *Collection[T]) Drop() error {
-	err := repo.collection.Drop(DefaultContext())
+	err := repo.collection.Drop(repo.traceContext())
 	return err
 }
 

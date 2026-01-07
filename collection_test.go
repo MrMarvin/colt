@@ -1,15 +1,17 @@
 package colt
 
 import (
+	"context"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 	"math/rand"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type testdoc struct {
@@ -304,5 +306,30 @@ func TestCollection_Aggregate(t *testing.T) {
 	assert.Equal(t, result[0]["count"], int32(2))
 
 	collection.Drop()
+	mockDb.Disconnect()
+}
+
+func TestCollection_WithContext(t *testing.T) {
+	rand.Seed(time.Now().UnixNano())
+	mockDb.Connect("mongodb://localhost:27017/colt?readPreference=primary&directConnection=true&ssl=false", "colt")
+
+	collection := GetCollection[*testdoc](&mockDb, "testdocs")
+	ctx := context.Background()
+
+	newCollection := collection.WithContext(ctx)
+
+	// Assert that the underlying mongo collection pointer is identical
+	assert.Equal(t, collection.collection, newCollection.collection)
+
+	// Assert that the traceCtx is different
+	assert.NotEqual(t, collection.traceCtx, newCollection.traceCtx)
+
+	// Assert that the original collection has nil traceCtx (default)
+	assert.Nil(t, collection.traceCtx)
+
+	// Assert that the new collection has the context set
+	assert.NotNil(t, newCollection.traceCtx)
+	assert.Equal(t, ctx, *newCollection.traceCtx)
+
 	mockDb.Disconnect()
 }
