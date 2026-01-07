@@ -10,7 +10,7 @@ func (repo *Collection[T]) CreateIndex(keys bson.D) error {
 		Keys:    keys,
 		Options: nil,
 	}
-	_, err := repo.collection.Indexes().CreateOne(DefaultContext(), mod)
+	_, err := repo.collection.Indexes().CreateOne(repo.traceContext(), mod)
 
 	return err
 }
