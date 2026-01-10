@@ -310,26 +310,69 @@ func TestCollection_Aggregate(t *testing.T) {
 }
 
 func TestCollection_WithContext(t *testing.T) {
-	rand.Seed(time.Now().UnixNano())
 	mockDb.Connect("mongodb://localhost:27017/colt?readPreference=primary&directConnection=true&ssl=false", "colt")
 
 	collection := GetCollection[*testdoc](&mockDb, "testdocs")
-	ctx := context.Background()
+	// Assert that the original collection has nil ctx (default)
+	assert.Nil(t, collection.ctx)
 
-	newCollection := collection.WithContext(ctx)
+	// Uses with explicit ctx
+	ctxCollection := collection.WithContext(testCtx)
 
 	// Assert that the underlying mongo collection pointer is identical
-	assert.Equal(t, collection.collection, newCollection.collection)
+	assert.Equal(t, collection.collection, ctxCollection.collection)
 
-	// Assert that the traceCtx is different
-	assert.NotEqual(t, collection.traceCtx, newCollection.traceCtx)
-
-	// Assert that the original collection has nil traceCtx (default)
-	assert.Nil(t, collection.traceCtx)
+	// Assert that the ctx is different
+	assert.NotEqual(t, collection.ctx, ctxCollection.ctx)
 
 	// Assert that the new collection has the context set
-	assert.NotNil(t, newCollection.traceCtx)
-	assert.Equal(t, ctx, *newCollection.traceCtx)
+	assert.NotNil(t, ctxCollection.ctx)
+	assert.Equal(t, testCtx, ctxCollection.ctx)
+
+	secondCtx := context.WithValue(context.Background(), "test", "secondCtx")
+	derivedCollection := ctxCollection.WithContext(secondCtx)
+
+	// Assert that the underlying mongo collection pointer is identical
+	assert.Equal(t, collection.collection, derivedCollection.collection)
+
+	// Assert that the ctx is different
+	assert.NotEqual(t, ctxCollection.ctx, derivedCollection.ctx)
 
 	mockDb.Disconnect()
+}
+
+func TestCollection_ctxOrDefault(t *testing.T) {
+
+	mockDb.Connect("mongodb://localhost:27017/colt?readPreference=primary&directConnection=true&ssl=false", "colt")
+
+	// Assert that the original collection has nil ctx (default)
+	staticCollection := GetCollection[*testdoc](&mockDb, "testdocs")
+	defaultCtx, defaultCancelFunc := staticCollection.ctxOrDefault()
+	assert.NotNil(t, defaultCtx)
+	assert.NotNil(t, defaultCancelFunc)
+
+	// Uses with explicit ctx
+	ctxCollection := staticCollection.WithContext(testCtx)
+
+	// Always has a deadline set
+	defaultCtx, defaultCancelFunc = ctxCollection.ctxOrDefault()
+	_, ok := defaultCtx.Deadline()
+	assert.True(t, ok)
+	// Enriches ctx with deadline and returns cancelFunc
+	assert.NotNil(t, defaultCancelFunc)
+
+	// Uses given ctx deadline if set
+	deadline := time.Now().Add(42 * time.Second)
+	deadlineCtx, cancel := context.WithDeadline(testCtx, deadline)
+
+	dbWithManualCtxDeadline := staticCollection.WithContext(deadlineCtx)
+	defaultCtx, defaultCancelFunc = dbWithManualCtxDeadline.ctxOrDefault()
+
+	ctxDeadline, ok := deadlineCtx.Deadline()
+	assert.True(t, ok)
+	assert.Equal(t, ctxDeadline, deadline)
+	// Doesnt return cancelFunc, as its managed by caller
+	assert.Nil(t, defaultCancelFunc)
+
+	cancel()
 }

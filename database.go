@@ -14,17 +14,25 @@ import (
 var defaultTimeout = 5 * time.Second
 
 type Database struct {
-	db       *mongo.Database
-	client   *mongo.Client
-	traceCtx *context.Context // optional context for tracing
+	db     *mongo.Database
+	client *mongo.Client
+	ctx    context.Context // optional context
 }
 
 func NewDatabase() *Database {
 	return &Database{}
 }
 
+func (db Database) WithContext(ctx context.Context) Database {
+	db.ctx = ctx
+	return db
+}
+
 func (db *Database) connect(options *options.ClientOptions, dbName string) error {
-	ctx := db.getContextOrDefault()
+	ctx, cancel := db.ctxOrDefault()
+	if cancel != nil {
+		defer cancel()
+	}
 
 	client, err := mongo.Connect(ctx, options)
 	if err != nil {
@@ -49,39 +57,38 @@ func (db *Database) Connect(connectionString string, dbName string) error {
 	return err
 }
 
-func (db *Database) WithContext(ctx context.Context) Database {
-	contextualizedDatabase := Database{
-		db:       db.db,
-		client:   db.client,
-		traceCtx: &ctx,
+func (db *Database) ctxOrDefault() (context.Context, context.CancelFunc) {
+	if ctx := db.ctx; ctx == nil {
+		return defaultContext()
 	}
-	return contextualizedDatabase
-}
-
-func (db *Database) getContextOrDefault() context.Context {
-	if ctx := db.traceCtx; ctx == nil {
-		return DefaultContext()
+	if _, hasDeadline := db.ctx.Deadline(); !hasDeadline {
+		ctxWithTimeout, cf := context.WithTimeout(db.ctx, defaultTimeout)
+		return ctxWithTimeout, cf
 	}
-	if _, hasDeadline := (*db.traceCtx).Deadline(); !hasDeadline {
-		ctxWithTimeout, _ := context.WithTimeout(*db.traceCtx, defaultTimeout)
-		return ctxWithTimeout
-	}
-	return *db.traceCtx
+	return db.ctx, nil
 }
 
 func (db *Database) Ping() error {
-	return db.client.Ping(db.getContextOrDefault(), nil)
+	ctx, cancel := db.ctxOrDefault()
+	if cancel != nil {
+		defer cancel()
+	}
+	return db.client.Ping(ctx, nil)
 }
 
 func (db *Database) Disconnect() error {
-	err := db.client.Disconnect(db.getContextOrDefault())
+	ctx, cancel := db.ctxOrDefault()
+	if cancel != nil {
+		defer cancel()
+	}
+	err := db.client.Disconnect(ctx)
 	db.db = nil
 	return err
 }
 
-func DefaultContext() context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), defaultTimeout)
-	return ctx
+func defaultContext() (context.Context, context.CancelFunc) {
+	ctx, cf := context.WithTimeout(context.Background(), defaultTimeout)
+	return ctx, cf
 }
 
 func GetCollection[T Document](db *Database, collectionName string) *Collection[T] {
